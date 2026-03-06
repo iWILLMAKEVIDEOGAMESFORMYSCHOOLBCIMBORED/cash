@@ -1,0 +1,88 @@
+workflows:
+  ios-release:
+    name: FakeCash iOS IPA
+    max_build_duration: 60
+    instance_type: mac_mini_m1
+
+    environment:
+      ios_signing:
+        distribution_type: ad_hoc        # change to app_store if uploading to App Store
+        bundle_identifier: com.fakecash.app
+      vars:
+        XCODE_PROJECT: "FakeCash.xcodeproj"
+        XCODE_SCHEME: "FakeCash"
+        BUNDLE_ID: "com.fakecash.app"
+      xcode: latest
+      cocoapods: default
+
+    scripts:
+      - name: Set Xcode version
+        script: |
+          xcode-select -p
+
+      - name: Install dependencies (no Podfile needed, skip if none)
+        script: |
+          if [ -f Podfile ]; then
+            pod install
+          else
+            echo "No Podfile found, skipping CocoaPods"
+          fi
+
+      - name: Set build number
+        script: |
+          agvtool new-version -all $(($(app-store-connect builds list \
+            --pre-release-version 1.0 \
+            --platform IOS \
+            -q) + 1)) || \
+          agvtool new-version -all 1
+
+      - name: Build IPA
+        script: |
+          xcode-build-increment || true
+          xcodebuild \
+            -project "$XCODE_PROJECT" \
+            -scheme "$XCODE_SCHEME" \
+            -configuration Release \
+            -archivePath "$CM_BUILD_DIR/FakeCash.xcarchive" \
+            archive \
+            CODE_SIGN_STYLE=Automatic \
+            DEVELOPMENT_TEAM=$CM_TEAM_ID \
+            -allowProvisioningUpdates
+
+      - name: Export IPA
+        script: |
+          xcodebuild \
+            -exportArchive \
+            -archivePath "$CM_BUILD_DIR/FakeCash.xcarchive" \
+            -exportPath "$CM_BUILD_DIR/output" \
+            -exportOptionsPlist /dev/stdin <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key>
+            <string>ad-hoc</string>
+            <key>teamID</key>
+            <string>$CM_TEAM_ID</string>
+            <key>signingStyle</key>
+            <string>automatic</string>
+            <key>stripSwiftSymbols</key>
+            <true/>
+            <key>thinning</key>
+            <string>&lt;none&gt;</string>
+          </dict>
+          </plist>
+          EOF
+
+    artifacts:
+      - $CM_BUILD_DIR/output/*.ipa
+      - $CM_BUILD_DIR/output/*.dSYM.zip
+      - /tmp/xcodebuild_logs/*.log
+
+    publishing:
+      email:
+        recipients:
+          - your@email.com          # ← change this to your email
+        notify:
+          success: true
+          failure: true
